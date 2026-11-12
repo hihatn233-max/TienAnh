@@ -1,4 +1,4 @@
-name: Build TienAnhFF
+name: Build TienAnh
 
 on:
   push:
@@ -9,335 +9,442 @@ jobs:
   build:
     runs-on: macos-13
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Setup Project
+      - name: Generate All Code Files
         run: |
           mkdir -p Sources
-          cat > Info.plist << 'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleExecutable</key><string>TienAnhFF</string>
-    <key>CFBundleIdentifier</key><string>com.tienanh.ffmenu</string>
-    <key>CFBundleName</key><string>TienAnhFF</string>
-    <key>CFBundleVersion</key><string>2.0</string>
-    <key>CFBundleShortVersionString</key><string>2.0</string>
-    <key>CFBundlePackageType</key><string>APPL</string>
-    <key>LSRequiresIPhoneOS</key><true/>
-    <key>MinimumOSVersion</key><string>14.0</string>
-    <key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>
-    <key>UIBackgroundModes</key><array><string>audio</string></array>
-    <key>UIStatusBarHidden</key><true/>
-    <key>UIViewControllerBasedStatusBarAppearance</key><false/>
-</dict>
-</plist>
-EOF
-          cat > entitlements.plist << 'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>platform-application</key><true/>
-    <key>com.apple.private.security.no-container</key><true/>
-    <key>com.apple.private.security.storage.AppDataContainers</key><true/>
-    <key>task_for_pid-allow</key><true/>
-    <key>com.apple.system-task-ports</key><true/>
-    <key>com.apple.private.hid.client.event-dispatch</key><true/>
-    <key>com.apple.private.hid.client.event-filter</key><true/>
-    <key>com.apple.security.exception.mach-lookup.global-name</key>
-    <array>
-        <string>com.apple.iohideventsystem</string>
-        <string>com.apple.hid.system-user-access-service</string>
-    </array>
-    <key>get-task-allow</key><true/>
-</dict>
-</plist>
-EOF
-          cat > offsets.json << 'EOF'
-{"local_player": "0x0","entity_list": "0x0","entity_stride": "0x0","entity_count": "0x0","view_matrix": "0x0","health": "0x0","team": "0x0","position": "0x0","head_bone": "0x0","ammo": "0x0"}
-EOF
-          
-          cat > Sources/Math.swift << 'EOF'
-import UIKit
-import simd
+          cat << 'EOF' > Sources/main.swift
+          import UIKit
+          import simd
+          import Darwin
+          import MachO
 
-struct Vec3 { var x: Float = 0, y: Float = 0, z: Float = 0 }
-func worldToScreen(vm: simd_float4x4, p: Vec3, w: Float, h: Float) -> CGPoint? {
-    let cx = p.x * vm.columns.0.x + p.y * vm.columns.1.x + p.z * vm.columns.2.x + vm.columns.3.x
-    let cy = p.x * vm.columns.0.y + p.y * vm.columns.1.y + p.z * vm.columns.2.y + vm.columns.3.y
-    let cw = p.x * vm.columns.0.w + p.y * vm.columns.1.w + p.z * vm.columns.2.w + vm.columns.3.w
-    if cw <= 0.001 { return nil }
-    return CGPoint(x: CGFloat((cx / cw * 0.5 + 0.5) * w), y: CGFloat((1.0 - (cy / cw * 0.5 + 0.5)) * h))
-}
-EOF
-          
-          cat > Sources/Config.swift << 'EOF'
-import Foundation
-final class Config {
-    static let shared = Config()
-    var espBox = true, espLine = true, espName = true, espDistance = true, espHealth = true, espTeamColor = true
-    var aimEnabled = false, aimFov: Float = 200, aimSmooth: Float = 0.35, aimHoldRMB = true, aimHeadBone = true
-    var godMode = false, godValue: Float = 500, ammoLock = false, ammoValue: UInt32 = 999
-    var menuX: CGFloat = 20, menuY: CGFloat = 100
-    private let path = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("tienanh_config.json")
-    func save() {
-        let d: [String: Any] = ["espBox": espBox, "espLine": espLine, "espName": espName, "espDistance": espDistance, "espHealth": espHealth, "espTeamColor": espTeamColor, "aimEnabled": aimEnabled, "aimFov": aimFov, "aimSmooth": aimSmooth, "aimHoldRMB": aimHoldRMB, "aimHeadBone": aimHeadBone, "godMode": godMode, "godValue": godValue, "ammoLock": ammoLock, "ammoValue": ammoValue, "menuX": Double(menuX), "menuY": Double(menuY)]
-        (try? JSONSerialization.data(withJSONObject: d, options: .prettyPrinted))?.write(to: path)
-    }
-    func load() {
-        guard let data = try? Data(contentsOf: path), let j = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
-        espBox = (j["espBox"] as? Bool) ?? espBox; espLine = (j["espLine"] as? Bool) ?? espLine; espName = (j["espName"] as? Bool) ?? espName; espDistance = (j["espDistance"] as? Bool) ?? espDistance; espHealth = (j["espHealth"] as? Bool) ?? espHealth; espTeamColor = (j["espTeamColor"] as? Bool) ?? espTeamColor
-        aimEnabled = (j["aimEnabled"] as? Bool) ?? aimEnabled; aimFov = (j["aimFov"] as? NSNumber).map { $0.floatValue } ?? aimFov; aimSmooth = (j["aimSmooth"] as? NSNumber).map { $0.floatValue } ?? aimSmooth; aimHoldRMB = (j["aimHoldRMB"] as? Bool) ?? aimHoldRMB; aimHeadBone = (j["aimHeadBone"] as? Bool) ?? aimHeadBone
-        godMode = (j["godMode"] as? Bool) ?? godMode; godValue = (j["godValue"] as? NSNumber).map { $0.floatValue } ?? godValue; ammoLock = (j["ammoLock"] as? Bool) ?? ammoLock; ammoValue = (j["ammoValue"] as? NSNumber).map { $0.uint32Value } ?? ammoValue
-        menuX = (j["menuX"] as? NSNumber).map { CGFloat($0.doubleValue) } ?? menuX; menuY = (j["menuY"] as? NSNumber).map { CGFloat($0.doubleValue) } ?? menuY
-    }
-}
-EOF
-          
-          cat > Sources/Memory.swift << 'EOF'
-import Foundation
-import Darwin
-import MachO
+          struct Vec3 { var x: Float = 0, y: Float = 0, z: Float = 0 }
+          func worldToScreen(vm: simd_float4x4, p: Vec3, w: Float, h: Float) -> CGPoint? {
+              let cx = p.x * vm.columns.0.x + p.y * vm.columns.1.x + p.z * vm.columns.2.x + vm.columns.3.x
+              let cy = p.x * vm.columns.0.y + p.y * vm.columns.1.y + p.z * vm.columns.2.y + vm.columns.3.y
+              let cw = p.x * vm.columns.0.w + p.y * vm.columns.1.w + p.z * vm.columns.2.w + vm.columns.3.w
+              if cw <= 0.001 { return nil }
+              let sx = (cx / cw * 0.5 + 0.5) * w
+              let sy = (1.0 - (cy / cw * 0.5 + 0.5)) * h
+              return CGPoint(x: CGFloat(sx), y: CGFloat(sy))
+          }
 
-struct FFOffsets { var localPlayer: UInt = 0; var entityList: UInt = 0; var entityStride: UInt = 0; var entityCount: UInt = 0; var viewMatrix: UInt = 0; var health: UInt = 0; var team: UInt = 0; var position: UInt = 0; var headBone: UInt = 0; var ammo: UInt = 0 }
-final class FFMemory {
-    private(set) var task: mach_port_t = 0; private(set) var base: UInt = 0; private(set) var pid: pid_t = 0
-    var off = FFOffsets(); var attached: Bool { task != 0 && base != 0 }
-    func attach(_ names: [String]) -> Bool {
-        let count = proc_listpids(UInt32(PROC_ALL_PIDS), 0, nil, 0); guard count > 0 else { return false }
-        var pids = [pid_t](repeating: 0, count: Int(count))
-        let n = proc_listpids(UInt32(PROC_ALL_PIDS), 0, &pids, Int32(pids.count * MemoryLayout<pid_t>.size)); guard n > 0 else { return false }
-        for p in pids where p > 0 {
-            var path = [CChar](repeating: 0, count: Int(PROC_PIDPATHINFO_MAXSIZE))
-            guard proc_pidpath(p, &path, UInt32(path.count)) > 0 else { continue }
-            guard names.contains(URL(fileURLWithPath: String(cString: path)).lastPathComponent) else { continue }
-            pid = p; var t: mach_port_t = 0; guard task_for_pid(mach_task_self_, p, &t) == KERN_SUCCESS else { continue }
-            task = t; base = findMainBinaryBase(); if base != 0 { return true }
-        }
-        return false
-    }
-    private func findMainBinaryBase() -> UInt {
-        var addr: mach_vm_address_t = 0; var best: UInt = 0; var bestSize: mach_vm_size_t = 0
-        while true {
-            var size: mach_vm_size_t = 0; var depth: natural_t = 0; var info = vm_region_submap_info_64(); var cnt = mach_msg_type_number_t(MemoryLayout<vm_region_submap_info_64>.size / MemoryLayout<integer_t>.size)
-            let kr = withUnsafeMutablePointer(to: &info) { $0.withMemoryRebound(to: integer_t.self, capacity: Int(cnt)) { mach_vm_region_recurse(task, &addr, &size, &depth, $0, &cnt) } }
-            if kr != KERN_SUCCESS { break }
-            if size > bestSize && size > 1_048_576 { var magic: UInt32 = 0; if read(addr, into: &magic, size: 4) && (magic == MH_MAGIC_64 || magic == MH_CIGAM_64) { best = UInt(addr); bestSize = size } }
-            addr += size
-        }
-        return best
-    }
-    @discardableResult func read<T>(_ addr: UInt, into out: inout T, size: Int? = nil) -> Bool {
-        guard attached, addr != 0 else { return false }; let sz = size ?? MemoryLayout<T>.size; var outsz: mach_vm_size_t = 0
-        let kr = withUnsafeMutablePointer(to: &out) { mach_vm_read_overwrite(task, addr, mach_vm_size_t(sz), mach_vm_address_t(UInt(bitPattern: $0)), &outsz) }
-        return kr == KERN_SUCCESS && outsz == mach_vm_size_t(sz)
-    }
-    func readVec3(_ a: UInt) -> Vec3? { var v = Vec3(); return read(a, into: &v, size: 12) ? v : nil }
-    func readMat4(_ a: UInt) -> simd_float4x4? { var m = simd_float4x4(0); return read(a, into: &m, size: 64) ? m : nil }
-    func readF32(_ a: UInt) -> Float? { var v: Float = 0; return read(a, into: &v) ? v : nil }
-    func readU32(_ a: UInt) -> UInt32? { var v: UInt32 = 0; return read(a, into: &v) ? v : nil }
-    @discardableResult func write<T>(_ addr: UInt, value: T) -> Bool {
-        guard attached, addr != 0 else { return false }; var prot: vm_prot_t = 0; var cur = vm_region_submap_info_64(); var cnt = mach_msg_type_number_t(MemoryLayout<vm_region_submap_info_64>.size / MemoryLayout<integer_t>.size); var a = mach_vm_address_t(addr); var sz: mach_vm_size_t = 0; var depth: natural_t = 0
-        _ = withUnsafeMutablePointer(to: &cur) { $0.withMemoryRebound(to: integer_t.self, capacity: Int(cnt)) { mach_vm_region_recurse(task, &a, &sz, &depth, $0, &cnt) } }
-        prot = cur.protection
-        if (prot & VM_PROT_WRITE) == 0 { mach_vm_protect(task, mach_vm_address_t(addr), mach_vm_size_t(MemoryLayout<T>.size), boolean_t(0), VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY) }
-        var v = value; let kr = withUnsafeMutablePointer(to: &v) { mach_vm_write(task, mach_vm_address_t(addr), vm_offset_t(UInt(bitPattern: $0)), mach_msg_type_number_t(MemoryLayout<T>.size)) }
-        if (prot & VM_PROT_WRITE) == 0 { mach_vm_protect(task, mach_vm_address_t(addr), mach_vm_size_t(MemoryLayout<T>.size), boolean_t(0), prot) }
-        return kr == KERN_SUCCESS
-    }
-    func loadOffsets(_ path: String) {
-        guard let d = try? Data(contentsOf: URL(fileURLWithPath: path)), let j = try? JSONSerialization.jsonObject(with: d) as? [String: String] else { return }
-        func h(_ k: String) -> UInt { UInt(j[k] ?? "0x0", radix: 16) ?? 0 }
-        off.localPlayer = h("local_player"); off.entityList = h("entity_list"); off.entityStride = h("entity_stride"); off.entityCount = h("entity_count"); off.viewMatrix = h("view_matrix"); off.health = h("health"); off.team = h("team"); off.position = h("position"); off.headBone = h("head_bone"); off.ammo = h("ammo")
-    }
-}
-EOF
-          
-          cat > Sources/Aim.swift << 'EOF'
-import Foundation
-typealias IOHIDClientRef = UnsafeMutableRawPointer
-typealias IOHIDEventRef  = UnsafeMutableRawPointer
-typealias CreateClientFn = @convention(c) (CFAllocator?) -> IOHIDClientRef?
-typealias DispatchFn     = @convention(c) (IOHIDClientRef?, IOHIDEventRef?) -> Void
-typealias CreateDigitizerFn = @convention(c) (CFAllocator?, UInt64, UInt32, UInt32, UInt32, UInt32, Double, Double, Double, Double, Double, Double, Double, Double, Double, Double, Double, Double, UInt32, UInt32, UInt32, UInt32) -> IOHIDEventRef?
-final class FFAim {
-    private var client: IOHIDClientRef?; private var create: CreateClientFn?; private var dispatch: DispatchFn?; private var makeDigitizer: CreateDigitizerFn?; private(set) var ready = false
-    func load() -> Bool {
-        for p in ["/System/Library/PrivateFrameworks/IOHID.framework/IOHID", "/System/Library/PrivateFrameworks/IOKit.framework/IOKit"] {
-            guard let h = dlopen(p, RTLD_LAZY) else { continue }
-            if let s1 = dlsym(h, "IOHIDEventSystemClientCreate"), let s2 = dlsym(h, "IOHIDEventSystemClientDispatchEvent"), let s3 = dlsym(h, "IOHIDEventCreateDigitizerEvent") {
-                create = unsafeBitCast(s1, to: CreateClientFn.self); dispatch = unsafeBitCast(s2, to: DispatchFn.self); makeDigitizer = unsafeBitCast(s3, to: CreateDigitizerFn.self)
-                client = create?(kCFAllocatorDefault); ready = client != nil; return ready
-            }
-        }
-        return false
-    }
-    func touch(x: Double, y: Double) {
-        guard ready, let c = client, let mk = makeDigitizer, let d = dispatch else { return }
-        if let down = mk(kCFAllocatorDefault, 0, 2, 0, 0, 1, x, y, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0) { d(c, down) }
-        if let up = mk(kCFAllocatorDefault, 0, 2, 0, 0, 0, x, y, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0) { d(c, up) }
-    }
-}
-EOF
-          
-          cat > Sources/Overlay.swift << 'EOF'
-import UIKit
-final class OverlayView: UIView {
-    struct Box { let rect: CGRect; let color: UIColor }
-    struct Label { let text: String; let point: CGPoint; let color: UIColor }
-    var boxes: [Box] = []; var lines: [(CGPoint, UIColor)] = []; var labels: [Label] = []
-    var crosshair: CGPoint?; var crosshairRadius: CGFloat = 0; var connected: Bool = false
-    override init(frame: CGRect) { super.init(frame: frame); backgroundColor = .clear; isOpaque = false; isUserInteractionEnabled = false; clearsContextBeforeDrawing = true }
-    required init?(coder: NSCoder) { fatalError() }
-    override func draw(_ rect: CGRect) {
-        guard let ctx = UIGraphicsGetCurrentContext() else { return }
-        ctx.setLineWidth(1.8)
-        for b in boxes { ctx.setStrokeColor(b.color.cgColor); ctx.stroke(b.rect) }
-        for (p, c) in lines { ctx.setStrokeColor(c.cgColor); ctx.move(to: CGPoint(x: bounds.midX, y: 0)); ctx.addLine(to: p); ctx.strokePath() }
-        let font = UIFont.boldSystemFont(ofSize: 11)
-        for l in labels { (l.text as NSString).draw(at: l.point, withAttributes: [.font: font, .foregroundColor: l.color]) }
-        if let t = crosshair {
-            ctx.setStrokeColor(UIColor.green.cgColor); ctx.setLineWidth(1.5)
-            if crosshairRadius > 0 { ctx.strokeEllipse(in: CGRect(x: t.x - crosshairRadius, y: t.y - crosshairRadius, width: crosshairRadius * 2, height: crosshairRadius * 2)) }
-            ctx.move(to: CGPoint(x: t.x - 8, y: t.y)); ctx.addLine(to: CGPoint(x: t.x + 8, y: t.y))
-            ctx.move(to: CGPoint(x: t.x, y: t.y - 8)); ctx.addLine(to: CGPoint(x: t.x, y: t.y + 8)); ctx.strokePath()
-        }
-    }
-}
-EOF
-          
-          cat > Sources/MenuView.swift << 'EOF'
-import UIKit
-final class MenuView: UIView {
-    private let cfg = Config.shared; private let header = UIView(); private let titleLabel = UILabel(); private let collapseBtn = UIButton(type: .system); private let body = UIStackView(); private var panStart: CGPoint = .zero; private(set) var collapsed: Bool = false
-    var onAttach: (() -> Void)?; var onDetach: (() -> Void)?; var onApply: (() -> Void)?
-    override init(frame: CGRect) { super.init(frame: frame); setup() }
-    required init?(coder: NSCoder) { fatalError() }
-    private func setup() {
-        backgroundColor = UIColor(white: 0.08, alpha: 0.92); layer.cornerRadius = 14; layer.borderWidth = 1; layer.borderColor = UIColor(red: 1, green: 0.3, blue: 0.3, alpha: 0.7).cgColor; layer.shadowColor = UIColor.black.cgColor; layer.shadowOpacity = 0.5; layer.shadowRadius = 12; clipsToBounds = false
-        header.frame = CGRect(x: 0, y: 0, width: 260, height: 44); header.backgroundColor = UIColor(red: 0.55, green: 0.05, blue: 0.1, alpha: 1); header.layer.cornerRadius = 14; header.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]; addSubview(header)
-        titleLabel.text = " TienAnh FF"; titleLabel.textColor = .white; titleLabel.font = .boldSystemFont(ofSize: 15); titleLabel.frame = CGRect(x: 10, y: 0, width: 180, height: 44); header.addSubview(titleLabel)
-        collapseBtn.setTitle("▾", for: .normal); collapseBtn.setTitleColor(.white, for: .normal); collapseBtn.titleLabel?.font = .boldSystemFont(ofSize: 16); collapseBtn.frame = CGRect(x: 220, y: 0, width: 34, height: 44); collapseBtn.addTarget(self, action: #selector(toggleCollapse), for: .touchUpInside); header.addSubview(collapseBtn)
-        body.axis = .vertical; body.spacing = 6; body.alignment = .fill; body.frame = CGRect(x: 10, y: 52, width: 240, height: 0); body.autoresizingMask = [.flexibleWidth]; addSubview(body)
-        buildBody(); layoutBody(); restorePosition()
-        header.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(onPan(_:))))
-    }
-    private func restorePosition() { frame.origin = CGPoint(x: cfg.menuX, y: cfg.menuY); frame.size = CGSize(width: 260, height: 44 + (collapsed ? 0 : bodyHeight() + 12)) }
-    @objc private func onPan(_ g: UIPanGestureRecognizer) {
-        let t = g.translation(in: superview); if g.state == .began { panStart = frame.origin }
-        if g.state == .changed { frame.origin = CGPoint(x: panStart.x + t.x, y: panStart.y + t.y) }
-        if g.state == .ended { cfg.menuX = frame.origin.x; cfg.menuY = frame.origin.y; cfg.save() }
-    }
-    @objc private func toggleCollapse() {
-        collapsed.toggle(); collapseBtn.setTitle(collapsed ? "▸" : "▾", for: .normal); body.isHidden = collapsed
-        UIView.animate(withDuration: 0.18) { self.frame.size.height = self.collapsed ? 44.0 : 44.0 + self.bodyHeight() + 12 }; cfg.save()
-    }
-    private func bodyHeight() -> CGFloat { return body.arrangedSubviews.reduce(0) { $0 + $1.frame.height + body.spacing } }
-    private func layoutBody() { var y: CGFloat = 0; body.layoutIfNeeded(); for v in body.arrangedSubviews { v.frame.origin.y = y; y += v.frame.height + body.spacing }; body.frame.size.height = y }
-    private func makeSection(_ title: String) -> UILabel { let l = UILabel(); l.text = title; l.textColor = UIColor(red: 1, green: 0.55, blue: 0.55, alpha: 1); l.font = .boldSystemFont(ofSize: 11); l.heightAnchor.constraint(equalToConstant: 16).isActive = true; return l }
-    private func makeToggle(_ title: String, _ key: ReferenceWritableKeyPath<Config, Bool>) -> UIView {
-        let row = UIView(); row.heightAnchor.constraint(equalToConstant: 30).isActive = true
-        let l = UILabel(); l.text = title; l.textColor = .white; l.font = .systemFont(ofSize: 12); l.frame = CGRect(x: 0, y: 0, width: 180, height: 30); row.addSubview(l)
-        let sw = UISwitch(); sw.isOn = cfg[keyPath: key]; sw.transform = CGAffineTransform(scaleX: 0.72, y: 0.72); sw.frame = CGRect(x: 178, y: 0, width: 60, height: 30); sw.tag = String(describing: key).hashValue; sw.addTarget(self, action: #selector(onToggle(_:)), for: .valueChanged); row.addSubview(sw)
-        return row
-    }
-    @objc private func onToggle(_ s: UISwitch) {
-        let map: [Int: ReferenceWritableKeyPath<Config, Bool>] = [ String(describing: \Config.espBox).hashValue: \.espBox, String(describing: \Config.espLine).hashValue: \.espLine, String(describing: \Config.espDistance).hashValue: \.espDistance, String(describing: \Config.espHealth).hashValue: \.espHealth, String(describing: \Config.aimEnabled).hashValue: \.aimEnabled, String(describing: \Config.godMode).hashValue: \.godMode, String(describing: \Config.ammoLock).hashValue: \.ammoLock ]
-        if let k = map[s.tag] { cfg[k] = s.isOn; cfg.save() }
-    }
-    private func makeButton(_ title: String, _ sel: Selector, _ color: UIColor) -> UIButton {
-        let b = UIButton(type: .system); b.setTitle(title, for: .normal); b.setTitleColor(.white, for: .normal); b.titleLabel?.font = .boldSystemFont(ofSize: 12); b.backgroundColor = color; b.layer.cornerRadius = 8; b.heightAnchor.constraint(equalToConstant: 32).isActive = true; b.addTarget(self, action: sel, for: .touchUpInside); return b
-    }
-    private func buildBody() {
-        body.addArrangedSubview(makeSection("ESP")); body.addArrangedSubview(makeToggle("Box", \.espBox)); body.addArrangedSubview(makeToggle("Line", \.espLine)); body.addArrangedSubview(makeToggle("Distance", \.espDistance)); body.addArrangedSubview(makeToggle("Health", \.espHealth))
-        body.addArrangedSubview(makeSection("AIM")); body.addArrangedSubview(makeToggle("Enabled", \.aimEnabled))
-        body.addArrangedSubview(makeSection("MEMORY")); body.addArrangedSubview(makeToggle("God Mode", \.godMode)); body.addArrangedSubview(makeToggle("Ammo Lock", \.ammoLock))
-        body.addArrangedSubview(makeSection("SESSION")); body.addArrangedSubview(makeButton("ATTACH", #selector(doAttach), UIColor(red: 0.15, green: 0.55, blue: 0.25, alpha: 1))); body.addArrangedSubview(makeButton("DETACH", #selector(doDetach), UIColor(red: 0.55, green: 0.15, blue: 0.15, alpha: 1))); body.addArrangedSubview(makeButton("SAVE", #selector(doApply), UIColor(red: 0.15, green: 0.25, blue: 0.55, alpha: 1)))
-    }
-    @objc private func doAttach() { onAttach?() }; @objc private func doDetach() { onDetach?() }; @objc private func doApply() { cfg.save(); onApply?() }
-}
-EOF
-          
-          cat > Sources/AppDelegate.swift << 'EOF'
-import UIKit
-import simd
+          final class Config {
+              static let shared = Config()
+              var espBox = true, espLine = true, espName = true
+              var espDistance = true, espHealth = true, espTeamColor = true
+              var aimEnabled = false, aimFov: Float = 200, aimSmooth: Float = 0.35
+              var aimHoldRMB = true, aimHeadBone = true
+              var godMode = false, godValue: Float = 500
+              var ammoLock = false, ammoValue: UInt32 = 999
+              var menuX: CGFloat = 20, menuY: CGFloat = 100
+              private let path: URL = {
+                  let d = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                  return d.appendingPathComponent("tienanh_config.json")
+              }()
+              func save() {
+                  let d: [String: Any] = [
+                      "espBox": espBox, "espLine": espLine, "espName": espName,
+                      "espDistance": espDistance, "espHealth": espHealth, "espTeamColor": espTeamColor,
+                      "aimEnabled": aimEnabled, "aimFov": aimFov, "aimSmooth": aimSmooth,
+                      "aimHoldRMB": aimHoldRMB, "aimHeadBone": aimHeadBone,
+                      "godMode": godMode, "godValue": godValue,
+                      "ammoLock": ammoLock, "ammoValue": ammoValue,
+                      "menuX": Double(menuX), "menuY": Double(menuY)
+                  ]
+                  (try? JSONSerialization.data(withJSONObject: d, options: .prettyPrinted))?.write(to: path)
+              }
+              func load() {
+                  guard let data = try? Data(contentsOf: path),
+                        let j = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+                  func b(_ k: String, _ d: Bool) -> Bool { (j[k] as? Bool) ?? d }
+                  func f(_ k: String, _ d: Float) -> Float { (j[k] as? NSNumber).map { $0.floatValue } ?? d }
+                  func u(_ k: String, _ d: UInt32) -> UInt32 { (j[k] as? NSNumber).map { $0.uint32Value } ?? d }
+                  func c(_ k: String, _ d: CGFloat) -> CGFloat { (j[k] as? NSNumber).map { CGFloat($0.doubleValue) } ?? d }
+                  espBox = b("espBox", espBox); espLine = b("espLine", espLine); espName = b("espName", espName)
+                  espDistance = b("espDistance", espDistance); espHealth = b("espHealth", espHealth); espTeamColor = b("espTeamColor", espTeamColor)
+                  aimEnabled = b("aimEnabled", aimEnabled); aimFov = f("aimFov", aimFov); aimSmooth = f("aimSmooth", aimSmooth)
+                  aimHoldRMB = b("aimHoldRMB", aimHoldRMB); aimHeadBone = b("aimHeadBone", aimHeadBone)
+                  godMode = b("godMode", godMode); godValue = f("godValue", godValue)
+                  ammoLock = b("ammoLock", ammoLock); ammoValue = u("ammoValue", ammoValue)
+                  menuX = c("menuX", menuX); menuY = c("menuY", menuY)
+              }
+          }
 
-final class AppDelegate: UIResponder, UIApplicationDelegate {
-    var window: UIWindow?; var overlayWin: UIWindow?; var overlay: OverlayView!; var menu: MenuView!
-    var mem = FFMemory(); var aim = FFAim(); var timer: DispatchSourceTimer?; var cfg = Config.shared
+          struct FFOffsets {
+              var localPlayer: UInt = 0, entityList: UInt = 0, entityStride: UInt = 0
+              var entityCount: UInt = 0, viewMatrix: UInt = 0, health: UInt = 0
+              var team: UInt = 0, position: UInt = 0, headBone: UInt = 0, ammo: UInt = 0
+          }
+          final class FFMemory {
+              private(set) var task: mach_port_t = 0, base: UInt = 0, pid: pid_t = 0
+              var off = FFOffsets()
+              var attached: Bool { task != 0 && base != 0 }
+              func attach(_ names: [String]) -> Bool {
+                  let count = proc_listpids(UInt32(PROC_ALL_PIDS), 0, nil, 0)
+                  guard count > 0 else { return false }
+                  var pids = [pid_t](repeating: 0, count: Int(count))
+                  let n = proc_listpids(UInt32(PROC_ALL_PIDS), 0, &pids, Int32(pids.count * MemoryLayout<pid_t>.size))
+                  guard n > 0 else { return false }
+                  for p in pids where p > 0 {
+                      var path = [CChar](repeating: 0, count: Int(PROC_PIDPATHINFO_MAXSIZE))
+                      guard proc_pidpath(p, &path, UInt32(path.count)) > 0 else { continue }
+                      let exe = URL(fileURLWithPath: String(cString: path)).lastPathComponent
+                      guard names.contains(exe) else { continue }
+                      pid = p
+                      var t: mach_port_t = 0
+                      if task_for_pid(mach_task_self_, p, &t) == KERN_SUCCESS {
+                          task = t
+                          base = findMainBinaryBase()
+                          if base != 0 { return true }
+                      }
+                  }
+                  return false
+              }
+              private func findMainBinaryBase() -> UInt {
+                  var addr: mach_vm_address_t = 0, best: UInt = 0
+                  var bestSize: mach_vm_size_t = 0
+                  while true {
+                      var size: mach_vm_size_t = 0; var depth: natural_t = 0
+                      var info = vm_region_submap_info_64()
+                      var cnt = mach_msg_type_number_t(MemoryLayout<vm_region_submap_info_64>.size / MemoryLayout<integer_t>.size)
+                      let kr = withUnsafeMutablePointer(to: &info) { ptr -> kern_return_t in
+                          ptr.withMemoryRebound(to: integer_t.self, capacity: Int(cnt)) {
+                              mach_vm_region_recurse(task, &addr, &size, &depth, $0, &cnt)
+                          }
+                      }
+                      if kr != KERN_SUCCESS { break }
+                      if size > bestSize && size > 1_048_576 {
+                          var magic: UInt32 = 0
+                          if read(addr, into: &magic, size: 4), magic == MH_MAGIC_64 || magic == MH_CIGAM_64 {
+                              best = UInt(addr); bestSize = size
+                          }
+                      }
+                      addr += size
+                  }
+                  return best
+              }
+              @discardableResult
+              func read<T>(_ addr: UInt, into out: inout T, size: Int? = nil) -> Bool {
+                  guard attached, addr != 0 else { return false }
+                  let sz = size ?? MemoryLayout<T>.size
+                  var outsz: mach_vm_size_t = 0
+                  let kr = withUnsafeMutablePointer(to: &out) { p -> kern_return_t in
+                      mach_vm_read_overwrite(task, addr, mach_vm_size_t(sz), mach_vm_address_t(UInt(bitPattern: p)), &outsz)
+                  }
+                  return kr == KERN_SUCCESS && outsz == mach_vm_size_t(sz)
+              }
+              func readVec3(_ a: UInt) -> Vec3? { var v = Vec3(); return read(a, into: &v, size: 12) ? v : nil }
+              func readMat4(_ a: UInt) -> simd_float4x4? { var m = simd_float4x4(0); return read(a, into: &m, size: 64) ? m : nil }
+              func readF32(_ a: UInt) -> Float? { var v: Float = 0; return read(a, into: &v) ? v : nil }
+              func readU32(_ a: UInt) -> UInt32? { var v: UInt32 = 0; return read(a, into: &v) ? v : nil }
+              @discardableResult
+              func write<T>(_ addr: UInt, value: T) -> Bool {
+                  guard attached, addr != 0 else { return false }
+                  var prot: vm_prot_t = 0; var cur = vm_region_submap_info_64()
+                  var cnt = mach_msg_type_number_t(MemoryLayout<vm_region_submap_info_64>.size / MemoryLayout<integer_t>.size)
+                  var a = mach_vm_address_t(addr); var sz: mach_vm_size_t = 0; var depth: natural_t = 0
+                  _ = withUnsafeMutablePointer(to: &cur) { p -> kern_return_t in
+                      p.withMemoryRebound(to: integer_t.self, capacity: Int(cnt)) { mach_vm_region_recurse(task, &a, &sz, &depth, $0, &cnt) }
+                  }
+                  prot = cur.protection
+                  if (prot & VM_PROT_WRITE) == 0 {
+                      mach_vm_protect(task, mach_vm_address_t(addr), mach_vm_size_t(MemoryLayout<T>.size), boolean_t(0), VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY)
+                  }
+                  var v = value
+                  let kr = withUnsafeMutablePointer(to: &v) { p -> kern_return_t in
+                      mach_vm_write(task, mach_vm_address_t(addr), vm_offset_t(UInt(bitPattern: p)), mach_msg_type_number_t(MemoryLayout<T>.size))
+                  }
+                  if (prot & VM_PROT_WRITE) == 0 {
+                      mach_vm_protect(task, mach_vm_address_t(addr), mach_vm_size_t(MemoryLayout<T>.size), boolean_t(0), prot)
+                  }
+                  return kr == KERN_SUCCESS
+              }
+              func loadOffsets(_ path: String) {
+                  guard let d = try? Data(contentsOf: URL(fileURLWithPath: path)),
+                        let j = try? JSONSerialization.jsonObject(with: d) as? [String: String] else { return }
+                  func h(_ k: String) -> UInt { UInt(j[k] ?? "0x0", radix: 16) ?? 0 }
+                  off.localPlayer = h("local_player"); off.entityList = h("entity_list")
+                  off.entityStride = h("entity_stride"); off.entityCount = h("entity_count")
+                  off.viewMatrix = h("view_matrix"); off.health = h("health")
+                  off.team = h("team"); off.position = h("position")
+                  off.headBone = h("head_bone"); off.ammo = h("ammo")
+              }
+          }
 
-    func application(_ app: UIApplication, didFinishLaunchingWithOptions o: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        cfg.load()
-        window = UIWindow(frame: UIScreen.main.bounds)
-        let vc = UIViewController(); vc.view.backgroundColor = .black; window?.rootViewController = vc; window?.makeKeyAndVisible()
+          typealias IOHIDClientRef = UnsafeMutableRawPointer
+          typealias IOHIDEventRef = UnsafeMutableRawPointer
+          typealias CreateClientFn = @convention(c) (CFAllocator?) -> IOHIDClientRef?
+          typealias DispatchFn = @convention(c) (IOHIDClientRef?, IOHIDEventRef?) -> Void
+          typealias CreateDigitizerFn = @convention(c) (CFAllocator?, UInt64, UInt32, UInt32, UInt32, UInt32, Double, Double, Double, Double, Double, Double, Double, Double, Double, Double, Double, Double, UInt32, UInt32, UInt32, UInt32) -> IOHIDEventRef?
+          final class FFAim {
+              private var client: IOHIDClientRef?, create: CreateClientFn?, dispatch: DispatchFn?, makeDigitizer: CreateDigitizerFn?
+              private(set) var ready = false
+              func load() -> Bool {
+                  let paths = ["/System/Library/PrivateFrameworks/IOHID.framework/IOHID", "/System/Library/PrivateFrameworks/IOKit.framework/IOKit"]
+                  for p in paths {
+                      guard let h = dlopen(p, RTLD_LAZY) else { continue }
+                      if let s1 = dlsym(h, "IOHIDEventSystemClientCreate"), let s2 = dlsym(h, "IOHIDEventSystemClientDispatchEvent"), let s3 = dlsym(h, "IOHIDEventCreateDigitizerEvent") {
+                          create = unsafeBitCast(s1, to: CreateClientFn.self)
+                          dispatch = unsafeBitCast(s2, to: DispatchFn.self)
+                          makeDigitizer = unsafeBitCast(s3, to: CreateDigitizerFn.self)
+                          client = create?(kCFAllocatorDefault)
+                          ready = client != nil
+                          return ready
+                      }
+                  }
+                  return false
+              }
+              func touch(x: Double, y: Double) {
+                  guard ready, let c = client, let mk = makeDigitizer, let d = dispatch else { return }
+                  if let down = mk(kCFAllocatorDefault, 0, 2, 0, 0, 1, x, y, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0) { d(c, down) }
+                  if let up = mk(kCFAllocatorDefault, 0, 2, 0, 0, 0, x, y, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0) { d(c, up) }
+              }
+          }
 
-        overlayWin = UIWindow(frame: UIScreen.main.bounds)
-        overlayWin?.windowLevel = UIWindow.Level(rawValue: UIWindow.Level.statusBar.rawValue + 10_000_000)
-        overlayWin?.backgroundColor = .clear; overlayWin?.isUserInteractionEnabled = true
-        let ovc = UIViewController(); ovc.view.backgroundColor = .clear
-        overlay = OverlayView(frame: ovc.view.bounds); overlay.autoresizingMask = [.flexibleWidth, .flexibleHeight]; ovc.view.addSubview(overlay)
-        menu = MenuView(frame: CGRect(x: cfg.menuX, y: cfg.menuY, width: 260, height: 44)); ovc.view.addSubview(menu)
-        menu.onAttach = { [weak self] in self?.attach() }; menu.onDetach = { [weak self] in self?.detach() }; menu.onApply = { [weak self] in self?.overlay.setNeedsDisplay() }
-        overlayWin?.rootViewController = ovc; overlayWin?.makeKeyAndVisible()
-        _ = aim.load()
+          final class OverlayView: UIView {
+              struct Box { let rect: CGRect; let color: UIColor }
+              struct Label { let text: String; let point: CGPoint; let color: UIColor }
+              var boxes: [Box] = []; var lines: [(CGPoint, UIColor)] = []; var labels: [Label] = []
+              var crosshair: CGPoint?; var crosshairRadius: CGFloat = 0; var connected: Bool = false
+              override init(frame: CGRect) {
+                  super.init(frame: frame)
+                  backgroundColor = .clear; isOpaque = false; isUserInteractionEnabled = false; clearsContextBeforeDrawing = true
+              }
+              required init?(coder: NSCoder) { fatalError() }
+              override func draw(_ rect: CGRect) {
+                  guard let ctx = UIGraphicsGetCurrentContext() else { return }
+                  ctx.setLineWidth(1.8)
+                  for b in boxes { ctx.setStrokeColor(b.color.cgColor); ctx.stroke(b.rect) }
+                  for (p, c) in lines {
+                      ctx.setStrokeColor(c.cgColor); ctx.move(to: CGPoint(x: bounds.midX, y: 0)); ctx.addLine(to: p); ctx.strokePath()
+                  }
+                  let font = UIFont.boldSystemFont(ofSize: 11)
+                  for l in labels { (l.text as NSString).draw(at: l.point, withAttributes: [.font: font, .foregroundColor: l.color]) }
+                  if let t = crosshair {
+                      ctx.setStrokeColor(UIColor.green.cgColor); ctx.setLineWidth(1.5)
+                      if crosshairRadius > 0 { ctx.strokeEllipse(in: CGRect(x: t.x - crosshairRadius, y: t.y - crosshairRadius, width: crosshairRadius * 2, height: crosshairRadius * 2)) }
+                      ctx.move(to: CGPoint(x: t.x - 8, y: t.y)); ctx.addLine(to: CGPoint(x: t.x + 8, y: t.y))
+                      ctx.move(to: CGPoint(x: t.x, y: t.y - 8)); ctx.addLine(to: CGPoint(x: t.x, y: t.y + 8)); ctx.strokePath()
+                  }
+              }
+          }
 
-        let docPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("offsets.json").path
-        if FileManager.default.fileExists(atPath: docPath) { mem.loadOffsets(docPath) }
-        else if let p = Bundle.main.path(forResource: "offsets", ofType: "json") { mem.loadOffsets(p) }
+          final class MenuView: UIView {
+              private let cfg = Config.shared
+              private let header = UIView(); private let titleLabel = UILabel(); private let collapseBtn = UIButton(type: .system); private let body = UIStackView()
+              private var panStart: CGPoint = .zero; private(set) var collapsed: Bool = false
+              var onAttach: (() -> Void)?; var onDetach: (() -> Void)?; var onApply: (() -> Void)?
+              override init(frame: CGRect) { super.init(frame: frame); setup() }
+              required init?(coder: NSCoder) { fatalError() }
+              private func setup() {
+                  backgroundColor = UIColor(white: 0.08, alpha: 0.92); layer.cornerRadius = 14; layer.borderWidth = 1; layer.borderColor = UIColor(red: 1, green: 0.3, blue: 0.3, alpha: 0.7).cgColor
+                  layer.shadowColor = UIColor.black.cgColor; layer.shadowOpacity = 0.5; layer.shadowRadius = 12; clipsToBounds = false
+                  header.frame = CGRect(x: 0, y: 0, width: 260, height: 44); header.backgroundColor = UIColor(red: 0.55, green: 0.05, blue: 0.1, alpha: 1)
+                  header.layer.cornerRadius = 14; header.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]; addSubview(header)
+                  titleLabel.text = " TienAnh"; titleLabel.textColor = .white; titleLabel.font = .boldSystemFont(ofSize: 15); titleLabel.frame = CGRect(x: 10, y: 0, width: 180, height: 44); header.addSubview(titleLabel)
+                  collapseBtn.setTitle("▾", for: .normal); collapseBtn.setTitleColor(.white, for: .normal); collapseBtn.titleLabel?.font = .boldSystemFont(ofSize: 16)
+                  collapseBtn.frame = CGRect(x: 220, y: 0, width: 34, height: 44); collapseBtn.addTarget(self, action: #selector(toggleCollapse), for: .touchUpInside); header.addSubview(collapseBtn)
+                  body.axis = .vertical; body.spacing = 6; body.alignment = .fill; body.frame = CGRect(x: 10, y: 52, width: 240, height: 0); body.autoresizingMask = [.flexibleWidth]; addSubview(body)
+                  buildBody(); layoutBody(); restorePosition()
+                  let pan = UIPanGestureRecognizer(target: self, action: #selector(onPan(_:))); header.addGestureRecognizer(pan)
+              }
+              private func restorePosition() {
+                  frame.origin = CGPoint(x: cfg.menuX, y: cfg.menuY); frame.size = CGSize(width: 260, height: 44 + (collapsed ? 0 : bodyHeight() + 12))
+              }
+              @objc private func onPan(_ g: UIPanGestureRecognizer) {
+                  let t = g.translation(in: superview)
+                  if g.state == .began { panStart = frame.origin }
+                  if g.state == .changed { frame.origin = CGPoint(x: panStart.x + t.x, y: panStart.y + t.y) }
+                  if g.state == .ended { cfg.menuX = frame.origin.x; cfg.menuY = frame.origin.y; cfg.save() }
+              }
+              @objc private func toggleCollapse() {
+                  collapsed.toggle(); collapseBtn.setTitle(collapsed ? "▸" : "▾", for: .normal); body.isHidden = collapsed
+                  let h = collapsed ? 44.0 : 44.0 + bodyHeight() + 12
+                  UIView.animate(withDuration: 0.18) { self.frame.size.height = h }; cfg.save()
+              }
+              private func bodyHeight() -> CGFloat { return body.arrangedSubviews.reduce(0) { $0 + $1.frame.height + body.spacing } }
+              private func layoutBody() {
+                  var y: CGFloat = 0; body.layoutIfNeeded()
+                  for v in body.arrangedSubviews { v.frame.origin.y = y; y += v.frame.height + body.spacing }
+                  body.frame.size.height = y
+              }
+              private func makeSection(_ title: String) -> UILabel {
+                  let l = UILabel(); l.text = title; l.textColor = UIColor(red: 1, green: 0.55, blue: 0.55, alpha: 1); l.font = .boldSystemFont(ofSize: 11)
+                  l.heightAnchor.constraint(equalToConstant: 16).isActive = true; return l
+              }
+              private func makeToggle(_ title: String, _ key: ReferenceWritableKeyPath<Config, Bool>) -> UIView {
+                  let row = UIView(); row.heightAnchor.constraint(equalToConstant: 30).isActive = true
+                  let l = UILabel(); l.text = title; l.textColor = .white; l.font = .systemFont(ofSize: 12); l.frame = CGRect(x: 0, y: 0, width: 180, height: 30); row.addSubview(l)
+                  let sw = UISwitch(); sw.isOn = cfg[keyPath: key]; sw.transform = CGAffineTransform(scaleX: 0.72, y: 0.72); sw.frame = CGRect(x: 178, y: 0, width: 60, height: 30)
+                  sw.tag = String(describing: key).hashValue; sw.addTarget(self, action: #selector(onToggle(_:)), for: .valueChanged); row.addSubview(sw); return row
+              }
+              @objc private func onToggle(_ s: UISwitch) {
+                  let map: [Int: ReferenceWritableKeyPath<Config, Bool>] = [
+                      String(describing: \Config.espBox).hashValue: \.espBox, String(describing: \Config.espLine).hashValue: \.espLine,
+                      String(describing: \Config.espName).hashValue: \.espName, String(describing: \Config.espDistance).hashValue: \.espDistance,
+                      String(describing: \Config.espHealth).hashValue: \.espHealth, String(describing: \Config.aimEnabled).hashValue: \.aimEnabled,
+                      String(describing: \Config.godMode).hashValue: \.godMode, String(describing: \Config.ammoLock).hashValue: \.ammoLock
+                  ]
+                  if let k = map[s.tag] { cfg[k] = s.isOn; cfg.save() }
+              }
+              private func makeButton(_ title: String, _ sel: Selector, _ color: UIColor) -> UIButton {
+                  let b = UIButton(type: .system); b.setTitle(title, for: .normal); b.setTitleColor(.white, for: .normal); b.titleLabel?.font = .boldSystemFont(ofSize: 12)
+                  b.backgroundColor = color; b.layer.cornerRadius = 8; b.heightAnchor.constraint(equalToConstant: 32).isActive = true; b.addTarget(self, action: sel, for: .touchUpInside); return b
+              }
+              private func buildBody() {
+                  body.addArrangedSubview(makeSection("ESP"))
+                  body.addArrangedSubview(makeToggle("Box", \.espBox)); body.addArrangedSubview(makeToggle("Line", \.espLine))
+                  body.addArrangedSubview(makeToggle("Distance", \.espDistance)); body.addArrangedSubview(makeToggle("Health", \.espHealth))
+                  body.addArrangedSubview(makeSection("AIM")); body.addArrangedSubview(makeToggle("Enabled", \.aimEnabled))
+                  body.addArrangedSubview(makeSection("MEMORY")); body.addArrangedSubview(makeToggle("God Mode", \.godMode)); body.addArrangedSubview(makeToggle("Ammo Lock", \.ammoLock))
+                  body.addArrangedSubview(makeSection("SESSION"))
+                  body.addArrangedSubview(makeButton("ATTACH", #selector(doAttach), UIColor(red: 0.15, green: 0.55, blue: 0.25, alpha: 1)))
+                  body.addArrangedSubview(makeButton("DETACH", #selector(doDetach), UIColor(red: 0.55, green: 0.15, blue: 0.15, alpha: 1)))
+                  body.addArrangedSubview(makeButton("SAVE", #selector(doApply), UIColor(red: 0.15, green: 0.25, blue: 0.55, alpha: 1)))
+              }
+              @objc private func doAttach() { onAttach?() }; @objc private func doDetach() { onDetach?() }; @objc private func doApply() { cfg.save(); onApply?() }
+          }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.attach() }
-        return true
-    }
+          final class AppDelegate: UIResponder, UIApplicationDelegate {
+              var window: UIWindow?, overlayWin: UIWindow?, overlay: OverlayView!, menu: MenuView!
+              var mem = FFMemory(), aim = FFAim(), timer: DispatchSourceTimer?, cfg = Config.shared
+              func application(_ app: UIApplication, didFinishLaunchingWithOptions o: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+                  cfg.load()
+                  window = UIWindow(frame: UIScreen.main.bounds); let vc = UIViewController(); vc.view.backgroundColor = .black
+                  window?.rootViewController = vc; window?.makeKeyAndVisible()
+                  overlayWin = UIWindow(frame: UIScreen.main.bounds); overlayWin?.windowLevel = UIWindow.Level(rawValue: UIWindow.Level.statusBar.rawValue + 10_000_000)
+                  overlayWin?.backgroundColor = .clear; overlayWin?.isUserInteractionEnabled = true
+                  let ovc = UIViewController(); ovc.view.backgroundColor = .clear
+                  overlay = OverlayView(frame: ovc.view.bounds); overlay.autoresizingMask = [.flexibleWidth, .flexibleHeight]; ovc.view.addSubview(overlay)
+                  menu = MenuView(frame: CGRect(x: cfg.menuX, y: cfg.menuY, width: 260, height: 44)); ovc.view.addSubview(menu)
+                  menu.onAttach = { [weak self] in self?.attach() }; menu.onDetach = { [weak self] in self?.detach() }; menu.onApply = { [weak self] in self?.overlay.setNeedsDisplay() }
+                  overlayWin?.rootViewController = ovc; overlayWin?.makeKeyAndVisible(); _ = aim.load()
+                  let docPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("offsets.json").path
+                  if FileManager.default.fileExists(atPath: docPath) { mem.loadOffsets(docPath) }
+                  else if let p = Bundle.main.path(forResource: "offsets", ofType: "json") { mem.loadOffsets(p) }
+                  DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.attach() }; return true
+              }
+              func attach() {
+                  let names = ["FreeFire", "freefire", "FreeFireMax", "Free Fire"]
+                  if mem.attach(names) { overlay.connected = true; start() }
+                  else { overlay.connected = false; DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.attach() } }
+              }
+              func detach() { timer?.cancel(); timer = nil; overlay.connected = false }
+              func start() {
+                  timer?.cancel(); timer = DispatchSource.makeTimerSource(queue: .main); timer?.schedule(deadline: .now(), repeating: .milliseconds(8))
+                  timer?.setEventHandler { [weak self] in self?.tick() }; timer?.resume()
+              }
+              func tick() {
+                  guard mem.attached else { return }
+                  let lp = mem.base + mem.off.localPlayer
+                  let localPos = mem.readVec3(lp + mem.off.position) ?? Vec3()
+                  let localTeam = mem.readU32(lp + mem.off.team) ?? 0
+                  guard let vm = mem.readMat4(mem.base + mem.off.viewMatrix) else { return }
+                  let screen = UIScreen.main.bounds.size
+                  let count = Int(mem.readU32(mem.base + mem.off.entityCount) ?? 0)
+                  guard count > 0, count <= 200 else { return }
+                  overlay.boxes.removeAll(); overlay.lines.removeAll(); overlay.labels.removeAll(); overlay.crosshair = nil
+                  let listBase = mem.base + mem.off.entityList
+                  var best: CGPoint?; var bestDist: CGFloat = CGFloat(cfg.aimFov)
+                  for i in 0..<count {
+                      let e = listBase + UInt(i) * mem.off.entityStride
+                      let team = mem.readU32(e + mem.off.team) ?? 0
+                      guard team != localTeam else { continue }
+                      let hp = mem.readF32(e + mem.off.health) ?? 0
+                      guard hp > 0 else { continue }
+                      guard let pos = mem.readVec3(e + mem.off.position), let head = mem.readVec3(e + mem.off.headBone),
+                            let s = worldToScreen(vm: vm, p: pos, w: Float(screen.width), h: Float(screen.height)),
+                            let h = worldToScreen(vm: vm, p: head, w: Float(screen.width), h: Float(screen.height)) else { continue }
+                      let boxH = s.y - h.y
+                      guard boxH > 0, boxH < 800 else { continue }
+                      let boxW = boxH / 2; let r = CGRect(x: h.x - boxW / 2, y: h.y, width: boxW, height: boxH)
+                      let color: UIColor = cfg.espTeamColor ? teamColor(team) : .red
+                      if cfg.espBox { overlay.boxes.append(.init(rect: r, color: color)) }
+                      if cfg.espLine { overlay.lines.append((h, color)) }
+                      if cfg.espDistance {
+                          let dx = pos.x - localPos.x, dz = pos.z - localPos.z; let d = sqrtf(dx * dx + dz * dz)
+                          overlay.labels.append(.init(text: String(format: "%.0fm", d), point: CGPoint(x: h.x - boxW / 2, y: h.y - 14), color: .yellow))
+                      }
+                      if cfg.espHealth { overlay.labels.append(.init(text: String(format: "%.0f", hp), point: CGPoint(x: h.x - boxW / 2 - 24, y: h.y + 2), color: .green)) }
+                      let cd = hypot(h.x - screen.width / 2, h.y - screen.height / 2)
+                      if cd < bestDist { bestDist = cd; best = h }
+                  }
+                  if cfg.aimEnabled, let t = best { overlay.crosshair = t; overlay.crosshairRadius = CGFloat(cfg.aimFov); aim.touch(x: Double(t.x), y: Double(t.y)) }
+                  if cfg.godMode { _ = mem.writeF32(lp + mem.off.health, cfg.godValue) }
+                  if cfg.ammoLock { _ = mem.writeU32(lp + mem.off.ammo, cfg.ammoValue) }
+                  overlay.setNeedsDisplay()
+              }
+              private func teamColor(_ t: UInt32) -> UIColor {
+                  let palette: [UIColor] = [.systemRed, .systemBlue, .systemGreen, .systemOrange, .systemPurple, .systemPink]
+                  return palette[Int(t) % palette.count]
+              }
+          }
 
-    func attach() {
-        if mem.attach(["FreeFire", "freefire", "FreeFireMax", "Free Fire"]) { overlay.connected = true; start() }
-        else { overlay.connected = false; DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.attach() } }
-    }
+          UIApplicationMain(
+              CommandLine.argc,
+              CommandLine.unsafeArgv,
+              nil,
+              NSStringFromClass(AppDelegate.self)
+          )
+          EOF
 
-    func detach() { timer?.cancel(); timer = nil; overlay.connected = false }
-    func start() {
-        timer?.cancel(); timer = DispatchSource.makeTimerSource(queue: .main); timer?.schedule(deadline: .now(), repeating: .milliseconds(8))
-        timer?.setEventHandler { [weak self] in self?.tick() }; timer?.resume()
-    }
+          cat << 'EOF' > Info.plist
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleExecutable</key><string>TienAnh</string>
+              <key>CFBundleIdentifier</key><string>com.tienanh.ffmenu</string>
+              <key>CFBundleName</key><string>TienAnh</string>
+              <key>CFBundleVersion</key><string>2.0</string>
+              <key>CFBundleShortVersionString</key><string>2.0</string>
+              <key>CFBundlePackageType</key><string>APPL</string>
+              <key>LSRequiresIPhoneOS</key><true/>
+              <key>MinimumOSVersion</key><string>14.0</string>
+              <key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>
+              <key>UIBackgroundModes</key><array><string>audio</string></array>
+              <key>UIStatusBarHidden</key><true/>
+              <key>UIViewControllerBasedStatusBarAppearance</key><false/>
+              <key>UILaunchScreen</key><dict/>
+          </dict>
+          </plist>
+          EOF
 
-    func tick() {
-        guard mem.attached else { return }
-        let lp = mem.base + mem.off.localPlayer; let localPos = mem.readVec3(lp + mem.off.position) ?? Vec3(); let localTeam = mem.readU32(lp + mem.off.team) ?? 0
-        guard let vm = mem.readMat4(mem.base + mem.off.viewMatrix) else { return }
-        let screen = UIScreen.main.bounds.size; let count = Int(mem.readU32(mem.base + mem.off.entityCount) ?? 0)
-        guard count > 0 && count <= 200 else { return }
-        overlay.boxes.removeAll(); overlay.lines.removeAll(); overlay.labels.removeAll(); overlay.crosshair = nil
-        let listBase = mem.base + mem.off.entityList; var best: CGPoint?; var bestDist: CGFloat = CGFloat(cfg.aimFov)
-        for i in 0..<count {
-            let e = listBase + UInt(i) * mem.off.entityStride; let team = mem.readU32(e + mem.off.team) ?? 0; guard team != localTeam else { continue }
-            let hp = mem.readF32(e + mem.off.health) ?? 0; guard hp > 0 else { continue }
-            guard let pos = mem.readVec3(e + mem.off.position), let head = mem.readVec3(e + mem.off.headBone),
-                  let s = worldToScreen(vm: vm, p: pos, w: Float(screen.width), h: Float(screen.height)),
-                  let h = worldToScreen(vm: vm, p: head, w: Float(screen.width), h: Float(screen.height)) else { continue }
-            let boxH = s.y - h.y; guard boxH > 0 && boxH < 800 else { continue }
-            let boxW = boxH / 2; let r = CGRect(x: h.x - boxW / 2, y: h.y, width: boxW, height: boxH); let color: UIColor = cfg.espTeamColor ? teamColor(team) : .red
-            if cfg.espBox { overlay.boxes.append(.init(rect: r, color: color)) }
-            if cfg.espLine { overlay.lines.append((h, color)) }
-            if cfg.espDistance { let dx = pos.x - localPos.x, dz = pos.z - localPos.z; let d = sqrtf(dx * dx + dz * dz); overlay.labels.append(.init(text: String(format: "%.0fm", d), point: CGPoint(x: h.x - boxW / 2, y: h.y - 14), color: .yellow)) }
-            if cfg.espHealth { overlay.labels.append(.init(text: String(format: "%.0f", hp), point: CGPoint(x: h.x - boxW / 2 - 24, y: h.y + 2), color: .green)) }
-            let cd = hypot(h.x - screen.width / 2, h.y - screen.height / 2)
-            if cd < bestDist { bestDist = cd; best = h }
-        }
-        if cfg.aimEnabled, let t = best { overlay.crosshair = t; overlay.crosshairRadius = CGFloat(cfg.aimFov); aim.touch(x: Double(t.x), y: Double(t.y)) }
-        if cfg.godMode { _ = mem.writeF32(lp + mem.off.health, cfg.godValue) }
-        if cfg.ammoLock { _ = mem.writeU32(lp + mem.off.ammo, cfg.ammoValue) }
-        overlay.setNeedsDisplay()
-    }
-    private func teamColor(_ t: UInt32) -> UIColor { let palette: [UIColor] = [.systemRed, .systemBlue, .systemGreen, .systemOrange, .systemPurple, .systemPink]; return palette[Int(t) % palette.count] }
-}
-EOF
+          cat << 'EOF' > entitlements.plist
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>platform-application</key><true/>
+              <key>com.apple.private.security.no-container</key><true/>
+              <key>com.apple.private.security.storage.AppDataContainers</key><true/>
+              <key>task_for_pid-allow</key><true/>
+              <key>com.apple.system-task-ports</key><true/>
+              <key>com.apple.private.hid.client.event-dispatch</key><true/>
+              <key>com.apple.private.hid.client.event-filter</key><true/>
+              <key>com.apple.security.exception.mach-lookup.global-name</key>
+              <array>
+                  <string>com.apple.iohideventsystem</string>
+                  <string>com.apple.hid.system.user-access-service</string>
+              </array>
+              <key>get-task-allow</key><true/>
+          </dict>
+          </plist>
+          EOF
 
-          cat > Sources/main.swift << 'EOF'
-import UIKit
-UIApplicationMain(CommandLine.argc, CommandLine.unsafeArgv, nil, NSStringFromClass(AppDelegate.self))
-EOF
+          cat << 'EOF' > offsets.json
+          {
+              "local_player": "0x0", "entity_list": "0x0", "entity_stride": "0x0", "entity_count": "0x0",
+              "view_matrix": "0x0", "health": "0x0", "team": "0x0", "position": "0x0", "head_bone": "0x0", "ammo": "0x0"
+          }
+          EOF
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.2.app
 
       - name: Install ldid
         run: brew install ldid
@@ -345,7 +452,7 @@ EOF
       - name: Build
         run: |
           set -e
-          APP="TienAnhFF"
+          APP="TienAnh"
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
           mkdir -p build/Payload/$APP.app
           
@@ -355,13 +462,6 @@ EOF
             -O -whole-module-optimization \
             -framework UIKit -framework Foundation -framework QuartzCore -framework CoreGraphics \
             Sources/main.swift \
-            Sources/AppDelegate.swift \
-            Sources/Memory.swift \
-            Sources/Overlay.swift \
-            Sources/Aim.swift \
-            Sources/Math.swift \
-            Sources/MenuView.swift \
-            Sources/Config.swift \
             -o build/Payload/$APP.app/$APP
             
           cp Info.plist build/Payload/$APP.app/
@@ -373,6 +473,6 @@ EOF
       - name: Upload tipa
         uses: actions/upload-artifact@v4
         with:
-          name: TienAnhFF-tipa
-          path: TienAnhFF.tipa
+          name: TienAnh-tipa
+          path: TienAnh.tipa
           retention-days: 7
