@@ -20,6 +20,7 @@ jobs:
           import simd
           import Darwin
           import MachO
+          import QuartzCore
 
           struct Vec3 { var x: Float = 0, y: Float = 0, z: Float = 0 }
           func worldToScreen(vm: simd_float4x4, p: Vec3, w: Float, h: Float) -> CGPoint? {
@@ -32,6 +33,15 @@ jobs:
               return CGPoint(x: CGFloat(sx), y: CGFloat(sy))
           }
 
+          class Humanizer {
+              static func jitter(_ value: CGFloat, range: CGFloat = 1.8) -> CGFloat {
+                  return value + CGFloat.random(in: -range...range)
+              }
+              static func aimDelay() -> UInt32 {
+                  return UInt32.random(in: 20...50)
+              }
+          }
+
           final class Config {
               static let shared = Config()
               var espBox = true, espLine = true, espName = true
@@ -40,11 +50,15 @@ jobs:
               var aimHoldRMB = true, aimHeadBone = true
               var godMode = false, godValue: Float = 500
               var ammoLock = false, ammoValue: UInt32 = 999
+              var humanizer = true
+              var stealth = false
               var menuX: CGFloat = 20, menuY: CGFloat = 100
+
               private let path: URL = {
                   let d = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
                   return d.appendingPathComponent("tienanh_config.json")
               }()
+
               func save() {
                   let d: [String: Any] = [
                       "espBox": espBox, "espLine": espLine, "espName": espName,
@@ -53,10 +67,12 @@ jobs:
                       "aimHoldRMB": aimHoldRMB, "aimHeadBone": aimHeadBone,
                       "godMode": godMode, "godValue": godValue,
                       "ammoLock": ammoLock, "ammoValue": ammoValue,
+                      "humanizer": humanizer, "stealth": stealth,
                       "menuX": Double(menuX), "menuY": Double(menuY)
                   ]
                   (try? JSONSerialization.data(withJSONObject: d, options: .prettyPrinted))?.write(to: path)
               }
+
               func load() {
                   guard let data = try? Data(contentsOf: path),
                         let j = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
@@ -70,6 +86,7 @@ jobs:
                   aimHoldRMB = b("aimHoldRMB", aimHoldRMB); aimHeadBone = b("aimHeadBone", aimHeadBone)
                   godMode = b("godMode", godMode); godValue = f("godValue", godValue)
                   ammoLock = b("ammoLock", ammoLock); ammoValue = u("ammoValue", ammoValue)
+                  humanizer = b("humanizer", humanizer); stealth = b("stealth", stealth)
                   menuX = c("menuX", menuX); menuY = c("menuY", menuY)
               }
           }
@@ -141,6 +158,7 @@ jobs:
               func readMat4(_ a: UInt) -> simd_float4x4? { var m = simd_float4x4(0); return read(a, into: &m, size: 64) ? m : nil }
               func readF32(_ a: UInt) -> Float? { var v: Float = 0; return read(a, into: &v) ? v : nil }
               func readU32(_ a: UInt) -> UInt32? { var v: UInt32 = 0; return read(a, into: &v) ? v : nil }
+              func readU64(_ a: UInt) -> UInt64? { var v: UInt64 = 0; return read(a, into: &v) ? v : nil }
               @discardableResult
               func write<T>(_ addr: UInt, value: T) -> Bool {
                   guard attached, addr != 0 else { return false }
@@ -180,6 +198,7 @@ jobs:
           typealias CreateClientFn = @convention(c) (CFAllocator?) -> IOHIDClientRef?
           typealias DispatchFn = @convention(c) (IOHIDClientRef?, IOHIDEventRef?) -> Void
           typealias CreateDigitizerFn = @convention(c) (CFAllocator?, UInt64, UInt32, UInt32, UInt32, UInt32, Double, Double, Double, Double, Double, Double, Double, Double, Double, Double, Double, Double, UInt32, UInt32, UInt32, UInt32) -> IOHIDEventRef?
+
           final class FFAim {
               private var client: IOHIDClientRef?, create: CreateClientFn?, dispatch: DispatchFn?, makeDigitizer: CreateDigitizerFn?
               private(set) var ready = false
@@ -287,7 +306,8 @@ jobs:
                       String(describing: \Config.espBox).hashValue: \.espBox, String(describing: \Config.espLine).hashValue: \.espLine,
                       String(describing: \Config.espName).hashValue: \.espName, String(describing: \Config.espDistance).hashValue: \.espDistance,
                       String(describing: \Config.espHealth).hashValue: \.espHealth, String(describing: \Config.aimEnabled).hashValue: \.aimEnabled,
-                      String(describing: \Config.godMode).hashValue: \.godMode, String(describing: \Config.ammoLock).hashValue: \.ammoLock
+                      String(describing: \Config.godMode).hashValue: \.godMode, String(describing: \Config.ammoLock).hashValue: \.ammoLock,
+                      String(describing: \Config.humanizer).hashValue: \.humanizer, String(describing: \Config.stealth).hashValue: \.stealth
                   ]
                   if let k = map[s.tag] { cfg[k] = s.isOn; cfg.save() }
               }
@@ -300,6 +320,8 @@ jobs:
                   body.addArrangedSubview(makeToggle("Box", \.espBox)); body.addArrangedSubview(makeToggle("Line", \.espLine))
                   body.addArrangedSubview(makeToggle("Distance", \.espDistance)); body.addArrangedSubview(makeToggle("Health", \.espHealth))
                   body.addArrangedSubview(makeSection("AIM")); body.addArrangedSubview(makeToggle("Enabled", \.aimEnabled))
+                  body.addArrangedSubview(makeSection("ANTIBAN"))
+                  body.addArrangedSubview(makeToggle("Humanizer", \.humanizer)); body.addArrangedSubview(makeToggle("Stealth Mode", \.stealth))
                   body.addArrangedSubview(makeSection("MEMORY")); body.addArrangedSubview(makeToggle("God Mode", \.godMode)); body.addArrangedSubview(makeToggle("Ammo Lock", \.ammoLock))
                   body.addArrangedSubview(makeSection("SESSION"))
                   body.addArrangedSubview(makeButton("ATTACH", #selector(doAttach), UIColor(red: 0.15, green: 0.55, blue: 0.25, alpha: 1)))
@@ -309,9 +331,12 @@ jobs:
               @objc private func doAttach() { onAttach?() }; @objc private func doDetach() { onDetach?() }; @objc private func doApply() { cfg.save(); onApply?() }
           }
 
-          final class AppDelegate: UIResponder, UIApplicationDelegate {
+          final class AppDelegate: UIResponder, UIApplicationDelegate, UIGestureRecognizerDelegate {
               var window: UIWindow?, overlayWin: UIWindow?, overlay: OverlayView!, menu: MenuView!
               var mem = FFMemory(), aim = FFAim(), timer: DispatchSourceTimer?, cfg = Config.shared
+              private var stealthField: UITextField?
+              private var lastAimTime: CFTimeInterval = 0
+
               func application(_ app: UIApplication, didFinishLaunchingWithOptions o: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
                   cfg.load()
                   window = UIWindow(frame: UIScreen.main.bounds); let vc = UIViewController(); vc.view.backgroundColor = .black
@@ -323,11 +348,55 @@ jobs:
                   menu = MenuView(frame: CGRect(x: cfg.menuX, y: cfg.menuY, width: 260, height: 44)); ovc.view.addSubview(menu)
                   menu.onAttach = { [weak self] in self?.attach() }; menu.onDetach = { [weak self] in self?.detach() }; menu.onApply = { [weak self] in self?.overlay.setNeedsDisplay() }
                   overlayWin?.rootViewController = ovc; overlayWin?.makeKeyAndVisible(); _ = aim.load()
+
+                  let tap = UITapGestureRecognizer(target: self, action: #selector(toggleMenuVisibility))
+                  tap.numberOfTouchesRequired = 3
+                  tap.numberOfTapsRequired = 2
+                  tap.cancelsTouchesInView = false
+                  tap.delegate = self
+                  overlayWin?.addGestureRecognizer(tap)
+
                   let docPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("offsets.json").path
                   if FileManager.default.fileExists(atPath: docPath) { mem.loadOffsets(docPath) }
                   else if let p = Bundle.main.path(forResource: "offsets", ofType: "json") { mem.loadOffsets(p) }
                   DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.attach() }; return true
               }
+
+              @objc func toggleMenuVisibility() {
+                  menu.isHidden.toggle()
+                  let gen = UIImpactFeedbackGenerator(style: .medium)
+                  gen.impactOccurred()
+              }
+
+              func enableStealth() {
+                  guard stealthField == nil else { return }
+                  let field = UITextField()
+                  field.isSecureTextEntry = true
+                  field.isUserInteractionEnabled = false
+                  field.backgroundColor = .clear
+                  field.frame = UIScreen.main.bounds
+                  overlayWin?.addSubview(field)
+                  overlayWin?.layer.superlayer?.addSublayer(field.layer)
+                  field.layer.sublayers?.first?.addSublayer(overlayWin!.layer)
+                  stealthField = field
+              }
+
+              func disableStealth() {
+                  stealthField?.removeFromSuperview()
+                  stealthField = nil
+              }
+
+              func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { return true }
+              func gestureRecognizer(_ g: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+                  var v: UIView? = touch.view
+                  while let vv = v {
+                      if vv is UIControl { return false }
+                      if vv == menu { return false }
+                      v = vv.superview
+                  }
+                  return true
+              }
+
               func attach() {
                   let names = ["FreeFire", "freefire", "FreeFireMax", "Free Fire"]
                   if mem.attach(names) { overlay.connected = true; start() }
@@ -339,6 +408,9 @@ jobs:
                   timer?.setEventHandler { [weak self] in self?.tick() }; timer?.resume()
               }
               func tick() {
+                  if cfg.stealth && stealthField == nil { enableStealth() }
+                  else if !cfg.stealth && stealthField != nil { disableStealth() }
+
                   guard mem.attached else { return }
                   let lp = mem.base + mem.off.localPlayer
                   let localPos = mem.readVec3(lp + mem.off.position) ?? Vec3()
@@ -373,7 +445,21 @@ jobs:
                       let cd = hypot(h.x - screen.width / 2, h.y - screen.height / 2)
                       if cd < bestDist { bestDist = cd; best = h }
                   }
-                  if cfg.aimEnabled, let t = best { overlay.crosshair = t; overlay.crosshairRadius = CGFloat(cfg.aimFov); aim.touch(x: Double(t.x), y: Double(t.y)) }
+                  if cfg.aimEnabled, let t = best {
+                      overlay.crosshair = t
+                      overlay.crosshairRadius = CGFloat(cfg.aimFov)
+                      var ax = t.x, ay = t.y
+                      if cfg.humanizer {
+                          ax = Humanizer.jitter(t.x); ay = Humanizer.jitter(t.y)
+                          let now = CACurrentMediaTime()
+                          if now - lastAimTime >= Double(Humanizer.aimDelay()) / 1000.0 {
+                              lastAimTime = now
+                              aim.touch(x: Double(ax), y: Double(ay))
+                          }
+                      } else {
+                          aim.touch(x: Double(ax), y: Double(ay))
+                      }
+                  }
                   if cfg.godMode { _ = mem.writeF32(lp + mem.off.health, cfg.godValue) }
                   if cfg.ammoLock { _ = mem.writeU32(lp + mem.off.ammo, cfg.ammoValue) }
                   overlay.setNeedsDisplay()
@@ -410,6 +496,16 @@ jobs:
               <key>UIStatusBarHidden</key><true/>
               <key>UIViewControllerBasedStatusBarAppearance</key><false/>
               <key>UILaunchScreen</key><dict/>
+              <key>CFBundleIconFiles</key>
+              <array><string>AppIcon60x60</string></array>
+              <key>CFBundleIcons</key>
+              <dict>
+                  <key>CFBundlePrimaryIcon</key>
+                  <dict>
+                      <key>CFBundleIconFiles</key>
+                      <array><string>AppIcon60x60</string></array>
+                  </dict>
+              </dict>
           </dict>
           </plist>
           EOF
@@ -438,10 +534,20 @@ jobs:
 
           cat << 'EOF' > offsets.json
           {
-              "local_player": "0x0", "entity_list": "0x0", "entity_stride": "0x0", "entity_count": "0x0",
-              "view_matrix": "0x0", "health": "0x0", "team": "0x0", "position": "0x0", "head_bone": "0x0", "ammo": "0x0"
+              "local_player":  "0x15e6b40",
+              "entity_list":   "0x15e6540",
+              "entity_stride": "0x8",
+              "entity_count":  "0x0",
+              "view_matrix":   "0x0",
+              "health":        "0x1207cbc",
+              "team":          "0x11bfea4",
+              "position":      "0x61b5e1c",
+              "head_bone":     "0x2FC",
+              "ammo":          "0x1ebc034"
           }
           EOF
+          
+          echo "iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAAOdEVYdFNvZnR3YXJlAEZpZ21hZW5nTzkwRgAAAGVJREFUaEPt0TEOgDAMQ9H/PjQ9QJcO7ZKqjR0nTj5z5syZM2fOnDlz5syZM2fOnDlz5syZM2fOnDlz5syZM2fOnDlz5syZM2fOnDlz5syZM2fOnDlz5syZM2fOnDlz5syZM2fOnDlz5syZM2fOnDlz5syZM2fOnDlz5syZM2fOnDlz5sx5AaJyAv/8sEajAAAAAElFTkSuQmCC" | base64 -d > icon.png
 
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode_15.2.app
@@ -466,6 +572,8 @@ jobs:
             
           cp Info.plist build/Payload/$APP.app/
           cp offsets.json build/Payload/$APP.app/
+          cp icon.png build/Payload/$APP.app/AppIcon60x60@2x.png
+          
           ldid -Sentitlements.plist build/Payload/$APP.app/$APP
           cd build
           zip -r9 ../$APP.tipa Payload/
